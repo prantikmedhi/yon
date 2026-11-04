@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yon</title>
+<meta name="description" content="Your Google Drive, OneDrive, Dropbox or S3 bucket as a drive in Finder. Zero bytes on your Mac. Open source.">
+<meta property="og:title" content="Yon">
+<meta property="og:description" content="Big files, over there. Still in Finder.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --paper: #FAFAF7;
+    --ink: #111111;
+    --mute: #6B6B66;
+    --line: #E4E4DF;
+    --max: 640px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #121211; --ink: #F2F2EE; --mute: #9A9A94; --line: #2A2A28; }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); color: var(--ink); }
+  body {
+    margin: 0;
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  header, main, footer { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+  header { height: 64px; display: flex; align-items: center; justify-content: space-between; }
+  .mark { font: 500 18px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -0.01em; }
+  header nav a { color: var(--mute); }
+  header nav a:hover { color: var(--ink); }
+
+  h1 {
+    margin: 72px 0 20px;
+    font-size: clamp(34px, 6vw, 52px);
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+    font-weight: 600;
+  }
+  .lede { margin: 0 0 32px; color: var(--mute); font-size: 19px; max-width: 34ch; }
+
+  .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; height: 44px; padding: 0 18px;
+    border-radius: 10px; font-weight: 500; white-space: nowrap;
+    transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1), opacity 160ms ease;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn.primary:hover { opacity: 0.88; }
+  .btn.quiet { color: var(--mute); padding: 0 6px; }
+  .btn.quiet:hover { color: var(--ink); }
+  .req { margin: 12px 0 0; font-size: 14px; color: var(--mute); }
+
+  figure { margin: 56px -20px 0; }
+  figure img { display: block; width: 100%; height: auto; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  figcaption { padding: 10px 20px 0; font-size: 14px; color: var(--mute); }
+
+  section { padding: 56px 0 0; }
+  h2 { margin: 0 0 20px; font-size: 22px; letter-spacing: -0.015em; font-weight: 600; }
+  p { margin: 0 0 14px; max-width: 60ch; }
+  p strong { font-weight: 600; }
+
+  footer { padding: 64px 20px 40px; color: var(--mute); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+
+  @media (prefers-reduced-motion: reduce) { .btn { transition: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <a class="mark" href="/">yon.</a>
+  <nav><a href="https://github.com/hackyard/yon">GitHub</a></nav>
+</header>
+
+<main>
+  <h1>Big files, over there.<br>Still in Finder.</h1>
+  <p class="lede">Your Google Drive, OneDrive, Dropbox or S3 bucket as a drive on your Mac. Zero bytes on disk. Open source.</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/hackyard/yon/releases/latest/download/Yon.dmg">Download for Mac</a>
+    <a class="btn quiet" href="https://github.com/hackyard/yon">View source</a>
+  </div>
+  <p class="req">macOS 14 or later. Apple silicon and Intel. Free, MIT.</p>
+
+  <figure>
+    <!-- TODO: real screenshot, 1280x800 light + dark: Finder window with "Google Drive" under Locations in the sidebar, a 40 GB .mov selected, Get Info showing "0 bytes on disk". -->
+    <img src="finder.png" alt="A Finder window with a Google Drive volume in the sidebar and a large video file selected." width="1280" height="800">
+    <figcaption>A Yon drive next to Macintosh HD. Files open in any app.</figcaption>
+  </figure>
+
+  <section>
+    <h2>How it works</h2>
+    <p><strong>Sign in with your provider.</strong> Your browser opens, you approve, the token stays on your Mac. Yon has no server and never sees your password.</p>
+    <p><strong>Files stream in pieces.</strong> Open a 40 GB video and it plays in about a second, because only the part being watched is fetched.</p>
+    <p><strong>Nothing else to install.</strong> No kernel extension, no driver. Yon mounts the drive the way macOS already mounts network volumes.</p>
+  </section>
+
+  <section>
+    <h2>Your storage, not ours</h2>
+    <p>Yon is free. Space comes from the plan you already pay for: Google gives 15 GB free and 2 TB for about $10 a month. Yon adds no bill and holds no copy of your files.</p>
+    <p>Works with anything rclone speaks: Google Drive, OneDrive, Dropbox, Box, Cloudflare R2, Backblaze B2, Amazon S3, and dozens more.</p>
+  </section>
+
+  <section>
+    <h2>Made for agents too</h2>
+    <p>A Yon drive is a normal folder at <code>~/Yon</code>. Claude Code, Cursor, <code>grep</code> and Final Cut read and write it like any other path, without downloading whole files first.</p>
+  </section>
+</main>
+
+<footer>
+  <span class="mark">yon.</span>
+  <span><a href="https://github.com/hackyard/yon">Source</a> · MIT · Built on <a href="https://rclone.org">rclone</a></span>
+</footer>
+
+</body>
+</html>
