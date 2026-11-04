@@ -10,7 +10,7 @@ Open source. No account with us. No storage bill from us. Your cloud, your quota
 
 Download `Yon.dmg` from the latest release, drag Yon to Applications, open it. It lives in the menu bar.
 
-macOS 14 or newer. Apple silicon and Intel. No kernel extension, no Apple developer gate. If Gatekeeper complains, right-click Yon and choose Open once.
+macOS 14 or newer, Apple silicon. Intel builds need an older SDK; see scripts/bundle.sh. No kernel extension, no Apple developer gate. If Gatekeeper complains, right-click Yon and choose Open once.
 
 ## Use
 

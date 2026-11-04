@@ -18,20 +18,30 @@ if [ "${1:-}" = "--dev" ]; then
     exit 0
 fi
 
-for a in arm64 x86_64; do swift build -c release --arch "$a" >/dev/null; done
-lipo -create -output "$APP/Contents/MacOS/Yon" .build/arm64-apple-macosx/release/Yon .build/x86_64-apple-macosx/release/Yon
+# ARCHS="arm64 x86_64" for a universal build. The macOS 27 Command Line Tools no longer compile x86_64,
+# so the default is Apple silicon only; build the Intel slice on a machine with an older SDK.
+ARCHS=${ARCHS:-arm64}
+bins=""
+for a in $ARCHS; do
+    swift build -c release --arch "$a" >/dev/null
+    bins="$bins .build/$a-apple-macosx/release/Yon"
+done
+lipo -create -output "$APP/Contents/MacOS/Yon" $bins
 
 cp Resources/Info.plist "$APP/Contents/"
 [ -f Resources/Yon.icns ] && cp Resources/Yon.icns "$APP/Contents/Resources/"
 
-# Bundle rclone (MIT) so users need nothing else. Universal binary from the official release zips.
+# Bundle rclone (MIT) so users need nothing else, from the official release zips.
 RCLONE_VERSION=${RCLONE_VERSION:-$(curl -fsSL https://downloads.rclone.org/version.txt | sed 's/rclone //')}
 tmp=$(mktemp -d)
-for a in arm64 amd64; do
-    curl -fsSL "https://downloads.rclone.org/$RCLONE_VERSION/rclone-$RCLONE_VERSION-osx-$a.zip" -o "$tmp/$a.zip"
-    unzip -q "$tmp/$a.zip" -d "$tmp/$a"
+rbins=""
+for a in $ARCHS; do
+    r=$([ "$a" = x86_64 ] && echo amd64 || echo arm64)
+    curl -fsSL "https://downloads.rclone.org/$RCLONE_VERSION/rclone-$RCLONE_VERSION-osx-$r.zip" -o "$tmp/$r.zip"
+    unzip -q "$tmp/$r.zip" -d "$tmp/$r"
+    rbins="$rbins $tmp/$r/*/rclone"
 done
-lipo -create -output "$APP/Contents/Resources/rclone" "$tmp"/arm64/*/rclone "$tmp"/amd64/*/rclone
+lipo -create -output "$APP/Contents/Resources/rclone" $rbins
 chmod +x "$APP/Contents/Resources/rclone"
 rm -rf "$tmp"
 

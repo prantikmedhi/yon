@@ -69,11 +69,10 @@ final class Store: ObservableObject {
             try FileManager.default.createDirectory(at: d.mountPoint, withIntermediateDirectories: true)
             // One loopback NFS server per drive, mounted by hostname so Finder shows "yon" as the location
             // instead of "localhost". Volume name in Finder is the mount folder's name.
-            let port = LoopbackHost.freePort()
-            guard port != 0 else { throw Rclone.Failure(message: "No free port for \(d.name).") }
+            // Port 0: rclone picks a free port and reports it in its log, so there is no bind race.
             let p = try Rclone.spawn([
                 "serve", "nfs", "\(d.name):",
-                "--addr", "127.0.0.1:\(port)",
+                "--addr", "127.0.0.1:0",
                 "--vfs-cache-mode", "writes",          // reads stream, writes stage locally then upload
                 "--vfs-read-chunk-size", "16M",
                 "--vfs-read-chunk-streams", "4",
@@ -87,24 +86,34 @@ final class Store: ObservableObject {
                     self?.mounted.remove(d.name)
                 }
             }
-            // Give the server a moment, then mount; retry while it is still starting.
-            var lastError = "\(d.name) did not mount in time."
-            for _ in 0..<20 {
+            // Wait for "NFS Server running at 127.0.0.1:PORT" in the log.
+            var port: Int?
+            for _ in 0..<40 where port == nil {
                 try await Task.sleep(for: .milliseconds(250))
                 if !p.isRunning { throw Rclone.Failure(message: "Could not start \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
-                let m = Process()
-                m.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
-                m.arguments = ["-o", "port=\(port),mountport=\(port),tcp,nolocks,locallocks,noresvport,nfc",
-                               "\(LoopbackHost.mountName):/", d.mountPoint.path]
-                let err = Pipe()
-                m.standardError = err
-                m.standardOutput = FileHandle.nullDevice
-                try m.run()
-                m.waitUntilExit()
-                if m.terminationStatus == 0 && isMounted(d.mountPoint) { break }
-                lastError = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                port = Self.reportedPort(in: Rclone.logDir.appendingPathComponent("\(d.name).log"))
             }
-            guard isMounted(d.mountPoint) else { throw Rclone.Failure(message: lastError.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            guard let port else { throw Rclone.Failure(message: "\(d.name) did not start in time.") }
+
+            let m = Process()
+            m.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
+            m.arguments = ["-o", "port=\(port),mountport=\(port),tcp,nolocks,locallocks,noresvport,nfc",
+                           "\(LoopbackHost.mountName):/", d.mountPoint.path]
+            let err = Pipe()
+            m.standardError = err
+            m.standardOutput = FileHandle.nullDevice
+            try m.run()
+            m.waitUntilExit()
+            guard m.terminationStatus == 0, isMounted(d.mountPoint) else {
+                let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                throw Rclone.Failure(message: msg.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            // mount_nfs resolved the hostname itself. Anyone on the network can answer for a .local name,
+            // so refuse the mount unless the kernel is actually talking to loopback.
+            guard Self.isLoopbackMount(d.mountPoint) else {
+                await unmountPath(d.mountPoint)
+                throw Rclone.Failure(message: "Refused \(d.name): \(LoopbackHost.mountName) resolved to another computer. Something on this network is impersonating it.")
+            }
             mounted.insert(d.name)
             autoMount.insert(d.name)
         } catch {
@@ -149,6 +158,31 @@ final class Store: ObservableObject {
             if !isMounted(url) { return }
             try? await Task.sleep(for: .milliseconds(300))
         }
+    }
+
+    private static func reportedPort(in log: URL) -> Int? {
+        guard let text = try? String(contentsOf: log, encoding: .utf8),
+              let range = text.range(of: #"NFS Server running at 127\.0\.0\.1:(\d+)"#, options: .regularExpression)
+        else { return nil }
+        return Int(text[range].split(separator: ":").last ?? "")
+    }
+
+    /// `nfsstat -m` prints the address the mount is currently using, e.g. "/ @ yon.local (127.0.0.1)".
+    private static func isLoopbackMount(_ url: URL) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/nfsstat")
+        p.arguments = ["-m", url.path]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        let addrs: [String] = text.components(separatedBy: "Current location:").dropFirst().compactMap { part in
+            guard let r = part.range(of: #"\(([0-9a-fA-F:.]+)\)"#, options: .regularExpression) else { return nil }
+            return String(part[r].dropFirst().dropLast())
+        }
+        return !addrs.isEmpty && addrs.allSatisfy { $0 == "127.0.0.1" || $0 == "::1" }
     }
 
     private func isMounted(_ url: URL) -> Bool {

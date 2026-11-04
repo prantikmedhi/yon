@@ -40,20 +40,4 @@ enum LoopbackHost {
         return ip == inet_addr("127.0.0.1") ? shortName : bonjourName
     }
 
-    /// A free TCP port on loopback for one drive's NFS server.
-    static func freePort() -> UInt16 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(fd) }
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-        addr.sin_port = 0
-        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let ok = withUnsafeMutablePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { p in
-                bind(fd, p, len) == 0 && getsockname(fd, p, &len) == 0
-            }
-        }
-        return ok ? UInt16(bigEndian: addr.sin_port) : 0
-    }
 }
