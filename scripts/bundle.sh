@@ -10,7 +10,7 @@ rm -rf dist && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 if [ "${1:-}" = "--dev" ]; then
     # Debug build, host arch only, system rclone. Fast inner loop.
     swift build >/dev/null
-    cp .build/debug/Yon "$APP/Contents/MacOS/Yon"
+    cp "$(swift build --show-bin-path)/Yon" "$APP/Contents/MacOS/Yon"
     cp Resources/Info.plist "$APP/Contents/"
     [ -f Resources/Yon.icns ] && cp Resources/Yon.icns "$APP/Contents/Resources/"
     codesign --force --sign - "$APP"
@@ -24,7 +24,9 @@ ARCHS=${ARCHS:-arm64}
 bins=""
 for a in $ARCHS; do
     swift build -c release --arch "$a" >/dev/null
-    bins="$bins .build/$a-apple-macosx/release/Yon"
+    bin="$(swift build -c release --arch "$a" --show-bin-path)/Yon"
+    cp "$bin" ".build/Yon-$a"
+    bins="$bins .build/Yon-$a"
 done
 lipo -create -output "$APP/Contents/MacOS/Yon" $bins
 
@@ -50,7 +52,8 @@ echo "built $APP"
 
 if [ "${1:-}" = "--dmg" ]; then
     ln -sfn /Applications dist/Applications
-    hdiutil create -quiet -volname Yon -srcfolder dist -ov -format UDZO dist/Yon.dmg
+    # Explicit size: hdiutil under-sizes the image for the 85 MB rclone binary otherwise.
+    hdiutil create -quiet -volname Yon -srcfolder dist -ov -format UDZO -size 200m dist/Yon.dmg
     rm dist/Applications
     echo "built dist/Yon.dmg"
 fi
