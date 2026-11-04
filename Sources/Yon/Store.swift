@@ -215,7 +215,14 @@ final class Store: ObservableObject {
         busy.insert(name)
         defer { busy.remove(name) }
         do {
-            try await Rclone.run(["config", "create", name, type])
+            // Own OAuth client per provider (Info.plist YonOAuthClients.<type>.id/secret). Without one,
+            // rclone's shared client is used; Google is retiring that during 2026.
+            var args = ["config", "create", name, type]
+            if let clients = Bundle.main.object(forInfoDictionaryKey: "YonOAuthClients") as? [String: [String: String]],
+               let c = clients[type], let id = c["id"], !id.isEmpty {
+                args += ["client_id=\(id)", "client_secret=\(c["secret"] ?? "")"]
+            }
+            try await Rclone.run(args)
             await refresh()
             if let d = drives.first(where: { $0.name == name }) { await mount(d) }
         } catch { self.error = error.localizedDescription }

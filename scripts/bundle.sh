@@ -33,6 +33,11 @@ lipo -create -output "$APP/Contents/MacOS/Yon" $bins
 cp Resources/Info.plist "$APP/Contents/"
 [ -f Resources/Yon.icns ] && cp Resources/Yon.icns "$APP/Contents/Resources/"
 
+# Own OAuth clients, from the environment so secrets never land in git.
+P="$APP/Contents/Info.plist"
+[ -n "${YON_GOOGLE_CLIENT_ID:-}" ] && plutil -replace YonOAuthClients.drive.id -string "$YON_GOOGLE_CLIENT_ID" "$P" && plutil -replace YonOAuthClients.drive.secret -string "${YON_GOOGLE_CLIENT_SECRET:-}" "$P"
+[ -n "${YON_MS_CLIENT_ID:-}" ] && plutil -replace YonOAuthClients.onedrive.id -string "$YON_MS_CLIENT_ID" "$P" && plutil -replace YonOAuthClients.onedrive.secret -string "${YON_MS_CLIENT_SECRET:-}" "$P"
+
 # Bundle rclone (MIT) so users need nothing else, from the official release zips.
 RCLONE_VERSION=${RCLONE_VERSION:-$(curl -fsSL https://downloads.rclone.org/version.txt | sed 's/rclone //')}
 tmp=$(mktemp -d)

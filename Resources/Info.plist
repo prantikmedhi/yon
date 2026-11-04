@@ -30,5 +30,24 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
+	<key>YonOAuthClients</key>
+	<dict>
+		<!-- Fill from scripts/bundle.sh via YON_GOOGLE_CLIENT_ID / _SECRET and YON_MS_CLIENT_ID / _SECRET.
+		     Empty id means rclone's shared client is used. -->
+		<key>drive</key>
+		<dict>
+			<key>id</key>
+			<string></string>
+			<key>secret</key>
+			<string></string>
+		</dict>
+		<key>onedrive</key>
+		<dict>
+			<key>id</key>
+			<string></string>
+			<key>secret</key>
+			<string></string>
+		</dict>
+	</dict>
 </dict>
 </plist>

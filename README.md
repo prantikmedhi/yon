@@ -32,6 +32,16 @@ Config lives in `~/Library/Application Support/Yon/rclone.conf`. Logs in `~/Libr
 
 The NFS server listens on 127.0.0.1 only, with no authentication beyond that, the same model FUSE-T uses. On a Mac shared by several user accounts, another signed-in user could reach a mounted drive. Yon assumes a single-user Mac.
 
+## OAuth client IDs
+
+Without configuration, sign-in uses rclone's shared Google and Microsoft client IDs. Google is retiring its shared one during 2026, so release builds should ship their own. Create a Google Cloud OAuth client (Desktop app) and an Azure app registration, then build with:
+
+```sh
+YON_GOOGLE_CLIENT_ID=… YON_GOOGLE_CLIENT_SECRET=… YON_MS_CLIENT_ID=… YON_MS_CLIENT_SECRET=… scripts/bundle.sh --dmg
+```
+
+The values are written into the app's Info.plist and never committed.
+
 ## Build
 
 ```sh
