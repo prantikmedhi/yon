@@ -18,7 +18,7 @@ if [ "${1:-}" = "--dev" ]; then
     exit 0
 fi
 
-# ARCHS="arm64 x86_64" for a universal build. The macOS 27 Command Line Tools no longer compile x86_64,
+# ARCHS="arm64 x86_64" for a universal build (what .github/workflows/release.yml ships). The macOS 27 Command Line Tools no longer compile x86_64,
 # so the default is Apple silicon only; build the Intel slice on a machine with an older SDK.
 ARCHS=${ARCHS:-arm64}
 bins=""

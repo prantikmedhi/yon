@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macos-15 ships an Xcode whose toolchain still compiles x86_64; the "Toolchain" step prints what it used.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: sw_vers && xcodebuild -version && swift --version
+
+      - name: Build universal Yon.dmg
+        env:
+          ARCHS: arm64 x86_64
+          # Repository secrets; empty when unset, in which case rclone's shared clients are used.
+          YON_GOOGLE_CLIENT_ID: ${{ secrets.YON_GOOGLE_CLIENT_ID }}
+          YON_GOOGLE_CLIENT_SECRET: ${{ secrets.YON_GOOGLE_CLIENT_SECRET }}
+          YON_MS_CLIENT_ID: ${{ secrets.YON_MS_CLIENT_ID }}
+          YON_MS_CLIENT_SECRET: ${{ secrets.YON_MS_CLIENT_SECRET }}
+        run: scripts/bundle.sh --dmg
+
+      - name: Verify both slices
+        run: |
+          for f in dist/Yon.app/Contents/MacOS/Yon dist/Yon.app/Contents/Resources/rclone; do
+            lipo -info "$f"
+            archs=$(lipo -archs "$f")
+            case "$archs" in *arm64*x86_64*|*x86_64*arm64*) ;; *) echo "::error::$f is not universal: $archs"; exit 1 ;; esac
+          done
+          codesign --verify --deep --strict dist/Yon.app
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Yon ${{ github.ref_name }}
+          files: dist/Yon.dmg
+          generate_release_notes: true
+          # v1.2.3-rc1 style tags stay pre-releases so releases/latest keeps pointing at the last real one.
+          prerelease: ${{ contains(github.ref_name, '-') }}

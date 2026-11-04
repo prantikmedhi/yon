@@ -10,7 +10,7 @@ Open source. No account with us. No storage bill from us. Your cloud, your quota
 
 Download `Yon.dmg` from the latest release, drag Yon to Applications, open it. It lives in the menu bar.
 
-macOS 14 or newer, Apple silicon. Intel builds need an older SDK; see scripts/bundle.sh. No kernel extension, no Apple developer gate. If Gatekeeper complains, right-click Yon and choose Open once.
+macOS 14 or newer, Apple silicon and Intel (one universal build). No kernel extension, no Apple developer gate. If Gatekeeper complains, right-click Yon and choose Open once.
 
 ## Use
 
@@ -39,6 +39,8 @@ Without configuration, sign-in uses rclone's shared Google and Microsoft client 
 ```sh
 YON_GOOGLE_CLIENT_ID=… YON_GOOGLE_CLIENT_SECRET=… YON_MS_CLIENT_ID=… YON_MS_CLIENT_SECRET=… scripts/bundle.sh --dmg
 ```
+
+Releases are built by `.github/workflows/release.yml` on every `v*` tag, universal (Apple silicon and Intel), reading the same four names from repository secrets.
 
 The values are written into the app's Info.plist and never committed.
 
