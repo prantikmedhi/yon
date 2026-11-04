@@ -71,9 +71,13 @@ final class Store: ObservableObject {
     func start() async {
         LoopbackHost.publish()
         await unmountStale()
+        await Self.killOrphans()
         await refresh()
         Onboarding.showIfNeeded(store: self)
-        for d in drives where autoMount.contains(d.name) { await mount(d) }
+        // In parallel: one slow provider (Google can take 30 s+ to refresh a token) must not hold up the rest.
+        await withTaskGroup(of: Void.self) { group in
+            for d in drives where autoMount.contains(d.name) { group.addTask { await self.mount(d) } }
+        }
     }
 
     /// An encrypted drive is a crypt remote wrapping a provider remote. The crypt one is the drive;
@@ -136,29 +140,21 @@ final class Store: ObservableObject {
             for _ in 0..<360 where ports.count < 2 {
                 try await Task.sleep(for: .milliseconds(250))
                 if !p.isRunning { throw Rclone.Failure(message: "Could not start \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
-                ports = Self.listeningPorts(pid: p.processIdentifier)
+                ports = await Self.listeningPorts(pid: p.processIdentifier)
             }
             guard ports.count == 2, let rc = await Rclone.RC.find(among: ports, pass: pass),
                   let port = ports.first(where: { $0 != rc.port }) else {
                 throw Rclone.Failure(message: "\(d.name) did not start in time. Check your internet connection and try Mount again.")
             }
 
-            let m = Process()
-            m.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
-            m.arguments = ["-o", "port=\(port),mountport=\(port),tcp,nolocks,locallocks,noresvport,nfc",
-                           "\(LoopbackHost.mountName):/", d.mountPoint.path]
-            let err = Pipe()
-            m.standardError = err
-            m.standardOutput = FileHandle.nullDevice
-            try m.run()
-            m.waitUntilExit()
-            guard m.terminationStatus == 0, isMounted(d.mountPoint) else {
-                let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                throw Rclone.Failure(message: msg.trimmingCharacters(in: .whitespacesAndNewlines))
+            let m = await Self.run("/sbin/mount_nfs", ["-o", "port=\(port),mountport=\(port),tcp,nolocks,locallocks,noresvport,nfc",
+                                                       "\(LoopbackHost.mountName):/", d.mountPoint.path])
+            guard m.status == 0, isMounted(d.mountPoint) else {
+                throw Rclone.Failure(message: m.err.trimmingCharacters(in: .whitespacesAndNewlines))
             }
             // mount_nfs resolved the hostname itself. Anyone on the network can answer for a .local name,
             // so refuse the mount unless the kernel is actually talking to loopback.
-            guard Self.isLoopbackMount(d.mountPoint) else {
+            guard await Self.isLoopbackMount(d.mountPoint) else {
                 await unmountPath(d.mountPoint)
                 throw Rclone.Failure(message: "Refused \(d.name): \(LoopbackHost.mountName) resolved to another computer. Something on this network is impersonating it.")
             }
@@ -242,45 +238,53 @@ final class Store: ObservableObject {
             ("/usr/sbin/diskutil", ["unmount", "force", url.path]),
         ]
         for (bin, args) in attempts {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = args
-            p.standardOutput = FileHandle.nullDevice
-            p.standardError = FileHandle.nullDevice
-            try? p.run()
-            p.waitUntilExit()
+            _ = await Self.run(bin, args)
             if !isMounted(url) { return }
             try? await Task.sleep(for: .milliseconds(300))
         }
     }
 
+    /// Runs a tool to completion off the main actor, so a slow lsof, mount_nfs or a stalled unmount
+    /// never freezes the menu.
+    nonisolated private static func run(_ path: String, _ args: [String]) async -> (status: Int32, out: String, err: String) {
+        await Task.detached {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: path)
+            p.arguments = args
+            let o = Pipe(), e = Pipe()
+            p.standardOutput = o
+            p.standardError = e
+            guard (try? p.run()) != nil else { return (-1, "", "") }
+            let out = o.fileHandleForReading.readDataToEndOfFile()
+            let err = e.fileHandleForReading.readDataToEndOfFile()
+            p.waitUntilExit()
+            return (p.terminationStatus, String(decoding: out, as: UTF8.self), String(decoding: err, as: UTF8.self))
+        }.value
+    }
+
+    /// rclone servers left by a Yon that was force-quit or crashed: reparented to launchd (PPID 1),
+    /// started with Yon's own config. They would share a VFS cache with the new servers, so stop them.
+    nonisolated private static func killOrphans() async {
+        let ps = await run("/bin/ps", ["-A", "-o", "pid=,ppid=,command="])
+        let marker = "--config \(Rclone.configFile.path) serve nfs "
+        for line in ps.out.split(separator: "\n") {
+            let f = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+            guard f.count == 3, f[1] == "1", f[2].contains(marker), let pid = Int32(f[0]) else { continue }
+            kill(pid, SIGTERM)
+        }
+    }
+
     /// `lsof -F n` prints one `n127.0.0.1:PORT` line per listening socket of the process.
-    private static func listeningPorts(pid: Int32) -> [Int] {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        p.arguments = ["-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "n"]
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return [] }
-        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        p.waitUntilExit()
+    nonisolated private static func listeningPorts(pid: Int32) async -> [Int] {
+        let text = await run("/usr/sbin/lsof", ["-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "n"]).out
         return text.split(separator: "\n")
             .filter { $0.hasPrefix("n127.0.0.1:") }
             .compactMap { Int($0.split(separator: ":").last ?? "") }
     }
 
     /// `nfsstat -m` prints the address the mount is currently using, e.g. "/ @ yon.local (127.0.0.1)".
-    private static func isLoopbackMount(_ url: URL) -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/nfsstat")
-        p.arguments = ["-m", url.path]
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return false }
-        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        p.waitUntilExit()
+    nonisolated private static func isLoopbackMount(_ url: URL) async -> Bool {
+        let text = await run("/usr/bin/nfsstat", ["-m", url.path]).out
         let addrs: [String] = text.components(separatedBy: "Current location:").dropFirst().compactMap { part in
             guard let r = part.range(of: #"\(([0-9a-fA-F:.]+)\)"#, options: .regularExpression) else { return nil }
             return String(part[r].dropFirst().dropLast())
@@ -288,12 +292,21 @@ final class Store: ObservableObject {
         return !addrs.isEmpty && addrs.allSatisfy { $0 == "127.0.0.1" || $0 == "::1" }
     }
 
+    /// From the kernel's mount table with MNT_NOWAIT: never touches the filesystem itself, so a stalled
+    /// NFS server cannot block it. statfs() on the mount point would hang along with the server.
     private func isMounted(_ url: URL) -> Bool {
-        var st = statfs()
-        guard statfs(url.path, &st) == 0 else { return false }
-        return withUnsafePointer(to: &st.f_mntonname) {
-            $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
-        } == url.path
+        let n = getfsstat(nil, 0, MNT_NOWAIT)
+        guard n > 0 else { return false }
+        var buf = Array(repeating: statfs(), count: Int(n))
+        let got = buf.withUnsafeMutableBufferPointer {
+            getfsstat($0.baseAddress, Int32(MemoryLayout<statfs>.stride * Int(n)), MNT_NOWAIT)
+        }
+        return buf.prefix(Int(max(got, 0))).contains { fs in
+            var name = fs.f_mntonname
+            return withUnsafePointer(to: &name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
+            } == url.path
+        }
     }
 
     // MARK: Add / remove

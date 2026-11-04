@@ -297,10 +297,29 @@ struct SettingsView: View {
         )
     }
 
+    /// Apple's documented per-user preference (com.apple.desktopservices DSDontWriteNetworkStores).
+    /// Off unless the user turns it on here; turning it off removes the key, restoring Finder's default.
+    private var noNetworkDSStore: Binding<Bool> {
+        let domain = "com.apple.desktopservices" as CFString, key = "DSDontWriteNetworkStores" as CFString
+        return Binding(
+            get: { (CFPreferencesCopyAppValue(key, domain) as? Bool) ?? false },
+            set: { on in
+                CFPreferencesSetAppValue(key, on ? kCFBooleanTrue : nil, domain)
+                CFPreferencesAppSynchronize(domain)
+                store.objectWillChange.send()
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section {
                 Toggle("Open Yon at login", isOn: loginItem)
+            }
+            Section {
+                Toggle("Keep Finder's .DS_Store files off network drives", isOn: noNetworkDSStore)
+            } footer: {
+                Text("Finder writes a .DS_Store file into every folder you open. With this on, it stops doing that on all network drives, including Yon's, so they don't upload. Applies after you log out and back in.")
             }
             Section {
                 row("Drives", Store.mountRoot)

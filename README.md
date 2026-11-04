@@ -38,6 +38,10 @@ Config lives in `~/Library/Application Support/Yon/rclone.conf`. Logs in `~/Libr
 
 An encrypted drive is two remotes: the provider remote under a hidden name (`<name> raw`) and a standard rclone [crypt](https://rclone.org/crypt/) remote with the drive's name wrapping it. The crypt remote is what gets served and mounted; removing the drive removes both. The format is rclone's, not Yon's: contents are encrypted in 64 KiB blocks with NaCl secretbox (XSalsa20-Poly1305), with a key derived from the password by scrypt. File and directory names are encrypted too (EME with AES, then base32), so the provider sees neither names nor contents, only sizes and modification times. Because each block is sealed on its own, reading the middle of a large file still fetches only the blocks being read. The password is stored obscured in rclone.conf, the same way rclone itself stores it; it is not in the Keychain and never leaves the Mac.
 
+macOS stores extended attributes on NFS volumes in `._name` sidecar files, so those upload next to your files. They carry Finder tags and the `com.apple.quarantine` flag that Gatekeeper checks, so Yon keeps them rather than deleting them. Finder's `.DS_Store` view files can be switched off in Settings; that uses Apple's `DSDontWriteNetworkStores` preference and applies to every network drive on the Mac.
+
+If Yon is force-quit, its rclone servers are cleaned up on the next launch.
+
 The NFS server listens on 127.0.0.1 only, with no authentication beyond that, the same model FUSE-T uses. On a Mac shared by several user accounts, another signed-in user could reach a mounted drive. Yon assumes a single-user Mac.
 
 ## Updates
