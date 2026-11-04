@@ -86,12 +86,12 @@ final class Store: ObservableObject {
                     self?.mounted.remove(d.name)
                 }
             }
-            // Wait for "NFS Server running at 127.0.0.1:PORT" in the log.
+            // Ask the kernel which loopback port this exact PID is listening on. Nothing else can answer for it.
             var port: Int?
             for _ in 0..<40 where port == nil {
                 try await Task.sleep(for: .milliseconds(250))
                 if !p.isRunning { throw Rclone.Failure(message: "Could not start \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
-                port = Self.reportedPort(in: Rclone.logDir.appendingPathComponent("\(d.name).log"))
+                port = Self.listeningPort(pid: p.processIdentifier)
             }
             guard let port else { throw Rclone.Failure(message: "\(d.name) did not start in time.") }
 
@@ -160,11 +160,21 @@ final class Store: ObservableObject {
         }
     }
 
-    private static func reportedPort(in log: URL) -> Int? {
-        guard let text = try? String(contentsOf: log, encoding: .utf8),
-              let range = text.range(of: #"NFS Server running at 127\.0\.0\.1:(\d+)"#, options: .regularExpression)
-        else { return nil }
-        return Int(text[range].split(separator: ":").last ?? "")
+    /// `lsof -F n` prints one `n127.0.0.1:PORT` line per listening socket of the process.
+    private static func listeningPort(pid: Int32) -> Int? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        p.arguments = ["-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "n"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return nil }
+        let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        return text.split(separator: "\n").lazy
+            .filter { $0.hasPrefix("n127.0.0.1:") }
+            .compactMap { Int($0.split(separator: ":").last ?? "") }
+            .first
     }
 
     /// `nfsstat -m` prints the address the mount is currently using, e.g. "/ @ yon.local (127.0.0.1)".
