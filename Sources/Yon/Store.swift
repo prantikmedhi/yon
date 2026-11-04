@@ -3,8 +3,10 @@ import Foundation
 
 struct Drive: Identifiable, Equatable {
     let name: String       // rclone remote name, also the volume name
-    let type: String       // rclone backend: drive, onedrive, dropbox, box, s3 …
+    let type: String       // rclone backend holding the bytes: drive, onedrive, dropbox, box, s3 …
+    let raw: String?       // for an encrypted drive, the hidden provider remote the crypt remote wraps
     var id: String { name }
+    var encrypted: Bool { raw != nil }
 
     var mountPoint: URL { Store.mountRoot.appendingPathComponent(name) }
     var label: String {
@@ -24,6 +26,8 @@ final class Store: ObservableObject {
     nonisolated static let mountRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Yon")
 
     @Published var drives: [Drive] = []
+    /// Every remote name in the config, including the hidden raw remotes behind encrypted drives.
+    @Published var names: Set<String> = []
     @Published var mounted: Set<String> = []
     @Published var busy: Set<String> = []
     @Published var error: String?
@@ -48,14 +52,23 @@ final class Store: ObservableObject {
         for d in drives where autoMount.contains(d.name) { await mount(d) }
     }
 
+    /// An encrypted drive is a crypt remote wrapping a provider remote. The crypt one is the drive;
+    /// the remote it points at is hidden, whatever it is called.
     func refresh() async {
         do {
-            let out = try await Rclone.run(["listremotes", "--long"])
-            drives = out.split(separator: "\n").compactMap { line in
-                let parts = line.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                guard parts.count == 2 else { return nil }
-                return Drive(name: parts[0], type: parts[1])
+            let all = try await Rclone.dump()
+            names = Set(all.keys)
+            func target(_ cfg: [String: String]) -> String? {
+                guard cfg["type"] == "crypt", let r = cfg["remote"] else { return nil }
+                return String(r.prefix { $0 != ":" })
             }
+            let hidden = Set(all.values.compactMap(target))
+            drives = all.compactMap { name, cfg in
+                guard !hidden.contains(name), let type = cfg["type"] else { return nil }
+                guard let raw = target(cfg) else { return Drive(name: name, type: type, raw: nil) }
+                return Drive(name: name, type: all[raw]?["type"] ?? type, raw: raw)
+            }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         } catch { self.error = error.localizedDescription }
     }
 
@@ -205,45 +218,64 @@ final class Store: ObservableObject {
 
     // MARK: Add / remove
 
+    /// True when `name` can be used for a new drive: free, and so is the raw name an encrypted drive would need.
+    func available(_ name: String) -> Bool {
+        !name.isEmpty && !names.contains(name) && !names.contains(Self.rawName(name))
+    }
+
+    private static func rawName(_ name: String) -> String { "\(name) raw" }
+
     /// OAuth providers: rclone opens the browser, the user signs in, the token lands in Yon's own rclone.conf.
-    func add(type: String) async {
+    /// With a password, the provider remote is created under a hidden name and a crypt remote with the
+    /// drive's name wraps it; that is the one that gets mounted.
+    func add(type: String, password: String? = nil) async {
         // The remote name is what Finder shows as the volume, so use the real product name.
-        let base = Drive(name: "", type: type).label
+        let base = Drive(name: "", type: type, raw: nil).label
         var name = base
         var n = 2
-        while drives.contains(where: { $0.name == name }) { name = "\(base) \(n)"; n += 1 }
+        while !available(name) { name = "\(base) \(n)"; n += 1 }
+        // Own OAuth client per provider (Info.plist YonOAuthClients.<type>.id/secret). Without one,
+        // rclone's shared client is used; Google is retiring that during 2026.
+        var params: [String] = []
+        if let clients = Bundle.main.object(forInfoDictionaryKey: "YonOAuthClients") as? [String: [String: String]],
+           let c = clients[type], let id = c["id"], !id.isEmpty {
+            params = ["client_id=\(id)", "client_secret=\(c["secret"] ?? "")"]
+        }
+        await create(name: name, type: type, params: params, password: password)
+    }
+
+    func addS3(name: String, provider: String, endpoint: String, key: String, secret: String, password: String? = nil) async {
+        var params = ["provider=\(provider)", "access_key_id=\(key)", "secret_access_key=\(secret)"]
+        if !endpoint.isEmpty { params.append("endpoint=\(endpoint)") }
+        await create(name: name, type: "s3", params: params, password: password)
+    }
+
+    private func create(name: String, type: String, params: [String], password: String?) async {
         busy.insert(name)
-        defer { busy.remove(name) }
+        let raw = password == nil ? name : Self.rawName(name)
         do {
-            // Own OAuth client per provider (Info.plist YonOAuthClients.<type>.id/secret). Without one,
-            // rclone's shared client is used; Google is retiring that during 2026.
-            var args = ["config", "create", name, type]
-            if let clients = Bundle.main.object(forInfoDictionaryKey: "YonOAuthClients") as? [String: [String: String]],
-               let c = clients[type], let id = c["id"], !id.isEmpty {
-                args += ["client_id=\(id)", "client_secret=\(c["secret"] ?? "")"]
+            try await Rclone.run(["config", "create", raw, type] + params)
+            if let password {
+                do { try await Rclone.createCrypt(name: name, raw: raw, password: password) }
+                catch {
+                    // Half an encrypted drive is worse than none: a plain drive the user did not ask for.
+                    _ = try? await Rclone.run(["config", "delete", raw])
+                    throw error
+                }
             }
-            try await Rclone.run(args)
             await refresh()
-            if let d = drives.first(where: { $0.name == name }) { await mount(d) }
         } catch { self.error = error.localizedDescription }
+        // mount() refuses a busy drive, so the sign-in must be over before the first mount.
+        busy.remove(name)
+        if let d = drives.first(where: { $0.name == name }) { await mount(d) }
     }
 
-    func addS3(name: String, provider: String, endpoint: String, key: String, secret: String) async {
-        busy.insert(name)
-        defer { busy.remove(name) }
-        do {
-            var args = ["config", "create", name, "s3", "provider=\(provider)", "access_key_id=\(key)", "secret_access_key=\(secret)"]
-            if !endpoint.isEmpty { args.append("endpoint=\(endpoint)") }
-            try await Rclone.run(args)
-            await refresh()
-            if let d = drives.first(where: { $0.name == name }) { await mount(d) }
-        } catch { self.error = error.localizedDescription }
-    }
-
+    /// Removes the remote, and for an encrypted drive the hidden provider remote behind it too.
     func remove(_ d: Drive) async {
         await unmount(d)
         do {
             try await Rclone.run(["config", "delete", d.name])
+            if let raw = d.raw { try await Rclone.run(["config", "delete", raw]) }
             try? FileManager.default.removeItem(at: d.mountPoint)
             await refresh()
         } catch { self.error = error.localizedDescription }

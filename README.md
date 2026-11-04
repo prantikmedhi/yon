@@ -24,11 +24,19 @@ macOS 14 or newer, Apple silicon and Intel (one universal build). No kernel exte
 
 Eject from the menu or Finder. Remove a drive from the menu when you no longer want it signed in on this Mac.
 
+## Encryption
+
+Turn on "Encrypt this drive" when adding a drive and choose a password. File names and contents are then encrypted on your Mac before upload, so the provider stores only ciphertext. In Finder the drive works as before; in the provider's own web UI the files have scrambled names and unreadable contents. Encrypted drives show a lock in the menu.
+
+The password is the only key. Yon does not keep a copy anywhere else, cannot recover it, and cannot reset it. If you lose it, the files are gone. The same password on another Mac running rclone or Yon reads the same files.
+
 ## How it works
 
 Yon is a thin Swift menu-bar app around [rclone](https://rclone.org). Each drive is an rclone remote served with `rclone serve nfs` on a loopback port and mounted with the system `mount_nfs`, so nothing extra is installed. The hostname `yon.local` is published over Bonjour by Yon itself, pointing at 127.0.0.1, which is what Finder shows as the location. Reads are chunked and streamed. Writes are staged in `~/Library/Caches/rclone` and uploaded in the background.
 
 Config lives in `~/Library/Application Support/Yon/rclone.conf`. Logs in `~/Library/Logs/Yon`.
+
+An encrypted drive is two remotes: the provider remote under a hidden name (`<name> raw`) and a standard rclone [crypt](https://rclone.org/crypt/) remote with the drive's name wrapping it. The crypt remote is what gets served and mounted; removing the drive removes both. The format is rclone's, not Yon's: contents are encrypted in 64 KiB blocks with NaCl secretbox (XSalsa20-Poly1305), with a key derived from the password by scrypt. File and directory names are encrypted too (EME with AES, then base32), so the provider sees neither names nor contents, only sizes and modification times. Because each block is sealed on its own, reading the middle of a large file still fetches only the blocks being read. The password is stored obscured in rclone.conf, the same way rclone itself stores it; it is not in the Keychain and never leaves the Mac.
 
 The NFS server listens on 127.0.0.1 only, with no authentication beyond that, the same model FUSE-T uses. On a Mac shared by several user accounts, another signed-in user could reach a mounted drive. Yon assumes a single-user Mac.
 
@@ -54,6 +62,6 @@ Needs Command Line Tools and nothing else. `scripts/bundle.sh --dev` does a fast
 
 ## Not yet
 
-End-to-end encryption (rclone `crypt`), share links, per-folder "keep on this Mac", upload progress in the menu. See issues.
+Share links, per-folder "keep on this Mac", upload progress in the menu, encrypting a drive that already exists. See issues.
 
 MIT.

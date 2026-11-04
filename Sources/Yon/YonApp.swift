@@ -17,8 +17,9 @@ struct YonApp: App {
                 .accessibilityLabel("Yon")
         }
 
-        Window("Add S3 drive", id: "s3") {
-            S3Form().environmentObject(store)
+        // One window per provider type (the value), so Add Drive → Google Drive and Add Drive → S3 do not share one.
+        WindowGroup("Add Drive", for: String.self) { type in
+            AddForm(type: type.wrappedValue ?? "drive").environmentObject(store)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -69,18 +70,21 @@ struct MenuView: View {
                 Label {
                     Text(d.name)
                 } icon: {
-                    Image(systemName: store.busy.contains(d.name) ? "circle.dotted" : (on ? "circle.fill" : "circle"))
+                    // Encrypted drives wear a lock; filled means mounted, as for the plain circle.
+                    Image(systemName: store.busy.contains(d.name) ? "circle.dotted"
+                          : d.encrypted ? (on ? "lock.circle.fill" : "lock.circle")
+                          : (on ? "circle.fill" : "circle"))
                 }
             }
         }
         Divider()
         Menu("Add Drive") {
-            Button("Google Drive") { Task { await store.add(type: "drive") } }
-            Button("OneDrive") { Task { await store.add(type: "onedrive") } }
-            Button("Dropbox") { Task { await store.add(type: "dropbox") } }
-            Button("Box") { Task { await store.add(type: "box") } }
+            Button("Google Drive…") { add("drive") }
+            Button("OneDrive…") { add("onedrive") }
+            Button("Dropbox…") { add("dropbox") }
+            Button("Box…") { add("box") }
             Divider()
-            Button("S3, R2, B2…") { openWindow(id: "s3"); NSApp.activate() }
+            Button("S3, R2, B2…") { add("s3") }
         }
         if let e = store.error {
             Divider()
@@ -94,10 +98,17 @@ struct MenuView: View {
             .keyboardShortcut("q")
     }
 
+    private func add(_ type: String) {
+        openWindow(value: type)
+        NSApp.activate()
+    }
+
     private func confirmRemove(_ d: Drive) {
         let a = NSAlert()
         a.messageText = "Remove \(d.name) from Yon?"
-        a.informativeText = "Your files stay in \(d.label). Only the sign-in on this Mac is removed."
+        a.informativeText = d.encrypted
+            ? "Your files stay in \(d.label), encrypted. Only the sign-in and the password on this Mac are removed. Without the password they cannot be read again."
+            : "Your files stay in \(d.label). Only the sign-in on this Mac is removed."
         a.addButton(withTitle: "Remove")
         a.addButton(withTitle: "Cancel")
         a.buttons.first?.hasDestructiveAction = true
@@ -107,22 +118,31 @@ struct MenuView: View {
 }
 
 // Command Line Tools ship no SwiftUI macro plugin, so forms keep state in plain ObservableObjects instead of @State.
-final class S3Fields: ObservableObject {
+final class AddFields: ObservableObject {
     @Published var name = ""
     @Published var provider = "Cloudflare"
     @Published var endpoint = ""
     @Published var key = ""
     @Published var secret = ""
+    @Published var encrypt = false
+    @Published var password = ""
+    @Published var confirm = ""
 }
 
-struct S3Form: View {
+/// Everything about a new drive that must be decided before its remote exists: S3 settings, and whether
+/// it is encrypted. rclone cannot rename a remote, so the encryption choice cannot come after sign-in.
+struct AddForm: View {
+    let type: String
     @EnvironmentObject private var store: Store
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var f = S3Fields()
+    @StateObject private var f = AddFields()
 
     private let providers = ["Cloudflare", "AWS", "Backblaze", "Wasabi", "DigitalOcean", "Minio", "Other"]
-    private var taken: Bool { store.drives.contains { $0.name == f.name } }
-    private var valid: Bool { !f.name.isEmpty && !f.key.isEmpty && !f.secret.isEmpty && !taken }
+    private var s3: Bool { type == "s3" }
+    private var label: String { Drive(name: "", type: type, raw: nil).label }
+    private var taken: Bool { !f.name.isEmpty && !store.available(f.name) }
+    private var passwordOK: Bool { !f.encrypt || (!f.password.isEmpty && f.password == f.confirm) }
+    private var valid: Bool { passwordOK && (!s3 || (!f.name.isEmpty && !f.key.isEmpty && !f.secret.isEmpty && !taken)) }
 
     private var endpointHint: String {
         switch f.provider {
@@ -137,25 +157,52 @@ struct S3Form: View {
 
     var body: some View {
         Form {
-            Section {
-                TextField("Name", text: $f.name, prompt: Text("Shown in Finder"))
-                if taken { Text("A drive named \(f.name) already exists.").font(.callout).foregroundStyle(.secondary) }
-                Picker("Provider", selection: $f.provider) {
-                    ForEach(providers, id: \.self) { Text($0) }
+            if s3 {
+                Section {
+                    TextField("Name", text: $f.name, prompt: Text("Shown in Finder"))
+                    if taken { Text("A drive named \(f.name) already exists.").font(.callout).foregroundStyle(.secondary) }
+                    Picker("Provider", selection: $f.provider) {
+                        ForEach(providers, id: \.self) { Text($0) }
+                    }
+                    TextField("Endpoint", text: $f.endpoint, prompt: Text(endpointHint))
                 }
-                TextField("Endpoint", text: $f.endpoint, prompt: Text(endpointHint))
+                Section {
+                    TextField("Access key", text: $f.key)
+                    SecureField("Secret key", text: $f.secret)
+                } footer: {
+                    Text("Keys are stored in Yon's rclone config on this Mac and sent only to the endpoint above.")
+                }
+            } else {
+                Section {
+                    LabeledContent("Provider", value: label)
+                } footer: {
+                    Text("Your browser opens to sign in with \(label). The token stays on this Mac.")
+                }
             }
             Section {
-                TextField("Access key", text: $f.key)
-                SecureField("Secret key", text: $f.secret)
+                Toggle("Encrypt this drive", isOn: $f.encrypt)
+                if f.encrypt {
+                    SecureField("Password", text: $f.password)
+                    SecureField("Confirm", text: $f.confirm)
+                    if !f.confirm.isEmpty && f.password != f.confirm {
+                        Text("Passwords do not match.").font(.callout).foregroundStyle(.secondary)
+                    }
+                }
             } footer: {
-                Text("Keys are stored in Yon's rclone config on this Mac and sent only to the endpoint above.")
+                Text("File names and contents are encrypted on this Mac before upload. The password is the only key: it cannot be recovered or reset, and without it the files cannot be read.")
             }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Add Drive") {
-                    Task { await store.addS3(name: f.name, provider: f.provider, endpoint: f.endpoint, key: f.key, secret: f.secret) }
+                Button(s3 ? "Add Drive" : "Sign In") {
+                    let password = f.encrypt ? f.password : nil
+                    Task {
+                        if s3 {
+                            await store.addS3(name: f.name, provider: f.provider, endpoint: f.endpoint, key: f.key, secret: f.secret, password: password)
+                        } else {
+                            await store.add(type: type, password: password)
+                        }
+                    }
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -166,6 +213,7 @@ struct S3Form: View {
         .formStyle(.grouped)
         .frame(width: 440)
         .padding(.bottom, 4)
+        .navigationTitle("Add \(label)")
     }
 }
 
