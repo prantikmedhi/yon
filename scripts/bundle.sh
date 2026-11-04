@@ -13,7 +13,11 @@ if [ "${1:-}" = "--dev" ]; then
     cp "$(swift build --show-bin-path)/Yon" "$APP/Contents/MacOS/Yon"
     cp Resources/Info.plist "$APP/Contents/"
     [ -f Resources/Yon.icns ] && cp Resources/Yon.icns "$APP/Contents/Resources/"
-    codesign --force --sign - "$APP"
+    # Sparkle (auto-updates) is a dynamic framework from the SwiftPM artifact; the binary links it via @rpath.
+    SPARKLE=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+    mkdir -p "$APP/Contents/Frameworks"
+    cp -R "$SPARKLE" "$APP/Contents/Frameworks/"
+    codesign --force --deep --sign - "$APP"
     echo "built $APP (dev)"
     exit 0
 fi
@@ -32,6 +36,17 @@ lipo -create -output "$APP/Contents/MacOS/Yon" $bins
 
 cp Resources/Info.plist "$APP/Contents/"
 [ -f Resources/Yon.icns ] && cp Resources/Yon.icns "$APP/Contents/Resources/"
+
+# Versions from git: short version from the tag (v0.2.0 -> 0.2.0) when building one, build number = commit count,
+# which Sparkle compares to decide whether an update is newer.
+TAG=${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || true)}
+case "$TAG" in v*) plutil -replace CFBundleShortVersionString -string "${TAG#v}" "$APP/Contents/Info.plist" ;; esac
+plutil -replace CFBundleVersion -string "$(git rev-list --count HEAD)" "$APP/Contents/Info.plist"
+
+# Sparkle (auto-updates) is a dynamic framework from the SwiftPM artifact; the binary links it via @rpath.
+SPARKLE=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
+mkdir -p "$APP/Contents/Frameworks"
+cp -R "$SPARKLE" "$APP/Contents/Frameworks/"
 
 # Own OAuth clients, from the environment so secrets never land in git.
 P="$APP/Contents/Info.plist"

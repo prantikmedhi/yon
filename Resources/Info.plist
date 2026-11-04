@@ -30,6 +30,12 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>MIT License</string>
+	<key>SUFeedURL</key>
+	<string>https://prantikmedhi.github.io/yon/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>0xaBEaUTkcVKgJnrtQyHkBge30qS8pbPv33mNaH/xYY=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 	<key>YonOAuthClients</key>
 	<dict>
 		<!-- Fill from scripts/bundle.sh via YON_GOOGLE_CLIENT_ID / _SECRET and YON_MS_CLIENT_ID / _SECRET.

@@ -1,5 +1,6 @@
 import AppKit
 import ServiceManagement
+import Sparkle
 import SwiftUI
 
 @main
@@ -30,9 +31,19 @@ struct YonApp: App {
     }
 }
 
+/// Sparkle. Feed and EdDSA public key come from Info.plist (SUFeedURL, SUPublicEDKey).
+/// Checks on a schedule, asks before installing; nothing happens without the user seeing it.
+enum Updater {
+    static let shared = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+}
+
 /// Unmount everything on quit so no stale NFS mounts are left behind.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var store: Store?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = Updater.shared
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store, !store.mounted.isEmpty else { return .terminateNow }
@@ -93,6 +104,7 @@ struct MenuView: View {
         }
         Divider()
         Button("About Yon") { NSApp.activate(); NSApp.orderFrontStandardAboutPanel(nil) }
+        Button("Check for Updates…") { Updater.shared.checkForUpdates(nil) }
         Button("Settings…") { openSettings(); NSApp.activate() }
             .keyboardShortcut(",")
         Button("Quit Yon") { NSApp.terminate(nil) }
