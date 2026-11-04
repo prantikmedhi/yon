@@ -3,13 +3,13 @@
     <channel>
         <title>Yon</title>
         <item>
-            <title>0.2.0</title>
-            <pubDate>Wed, 04 Nov 2026 20:16:51 +0000</pubDate>
-            <link>https://github.com/prantikmedhi/yon/releases/tag/v0.2.0</link>
-            <sparkle:version>1</sparkle:version>
-            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <title>0.2.1</title>
+            <pubDate>Wed, 04 Nov 2026 20:32:54 +0000</pubDate>
+            <link>https://github.com/prantikmedhi/yon/releases/tag/v0.2.1</link>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/prantikmedhi/yon/releases/download/v0.2.0/Yon.dmg" length="73135484" type="application/octet-stream" sparkle:edSignature="+IwXG047wY6dl9Bx28lq51YQLE4puYKfQgSkgsMfFL2mzw1hZ5seQm1NUxtHKzWojiLjHVAT1vLCG5YD6/wEDw=="/>
+            <enclosure url="https://github.com/prantikmedhi/yon/releases/download/v0.2.1/Yon.dmg" length="73160569" type="application/octet-stream" sparkle:edSignature="zJZtDM3oBf5Gk0ziIlwbxUyIg0Le/Cs+kgRfG01AiFVxkMM8jK4DAF8WeNtnwP7IgOX/7USBrRSk8cbMoVUiBw=="/>
         </item>
     </channel>
 </rss>
