@@ -42,6 +42,7 @@ final class Store: ObservableObject {
     }
 
     func start() async {
+        LoopbackHost.publish()
         await unmountStale()
         await refresh()
         for d in drives where autoMount.contains(d.name) { await mount(d) }
@@ -66,15 +67,18 @@ final class Store: ObservableObject {
         defer { busy.remove(d.name) }
         do {
             try FileManager.default.createDirectory(at: d.mountPoint, withIntermediateDirectories: true)
+            // One loopback NFS server per drive, mounted by hostname so Finder shows "yon" as the location
+            // instead of "localhost". Volume name in Finder is the mount folder's name.
+            let port = LoopbackHost.freePort()
+            guard port != 0 else { throw Rclone.Failure(message: "No free port for \(d.name).") }
             let p = try Rclone.spawn([
-                "nfsmount", "\(d.name):", d.mountPoint.path,
-                "--volname", d.name,
+                "serve", "nfs", "\(d.name):",
+                "--addr", "127.0.0.1:\(port)",
                 "--vfs-cache-mode", "writes",          // reads stream, writes stage locally then upload
                 "--vfs-read-chunk-size", "16M",
                 "--vfs-read-chunk-streams", "4",
                 "--dir-cache-time", "30s",
                 "--poll-interval", "30s",
-                "--noappledouble",
             ], logName: d.name)
             processes[d.name] = p
             p.terminationHandler = { [weak self] _ in
@@ -83,13 +87,24 @@ final class Store: ObservableObject {
                     self?.mounted.remove(d.name)
                 }
             }
-            // Wait until the mount shows up (rclone nfsmount takes ~1 s).
-            for _ in 0..<40 {
+            // Give the server a moment, then mount; retry while it is still starting.
+            var lastError = "\(d.name) did not mount in time."
+            for _ in 0..<20 {
                 try await Task.sleep(for: .milliseconds(250))
-                if isMounted(d.mountPoint) { break }
-                if !p.isRunning { throw Rclone.Failure(message: "Could not mount \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
+                if !p.isRunning { throw Rclone.Failure(message: "Could not start \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
+                let m = Process()
+                m.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
+                m.arguments = ["-o", "port=\(port),mountport=\(port),tcp,nolocks,locallocks,noresvport,nfc",
+                               "\(LoopbackHost.mountName):/", d.mountPoint.path]
+                let err = Pipe()
+                m.standardError = err
+                m.standardOutput = FileHandle.nullDevice
+                try m.run()
+                m.waitUntilExit()
+                if m.terminationStatus == 0 && isMounted(d.mountPoint) { break }
+                lastError = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             }
-            guard isMounted(d.mountPoint) else { throw Rclone.Failure(message: "\(d.name) did not mount in time.") }
+            guard isMounted(d.mountPoint) else { throw Rclone.Failure(message: lastError.trimmingCharacters(in: .whitespacesAndNewlines)) }
             mounted.insert(d.name)
             autoMount.insert(d.name)
         } catch {
@@ -109,6 +124,7 @@ final class Store: ObservableObject {
 
     func unmountAll() async {
         for d in drives where mounted.contains(d.name) { await unmount(d, forget: false) }
+        LoopbackHost.unpublish()
     }
 
     /// Mounts left over from a crash are stale NFS mounts; force them off before anything else.
@@ -118,10 +134,16 @@ final class Store: ObservableObject {
     }
 
     private func unmountPath(_ url: URL) async {
-        for args in [["umount", url.path], ["umount", "-f", url.path]] {
+        let attempts: [(String, [String])] = [
+            ("/sbin/umount", [url.path]),
+            ("/usr/sbin/diskutil", ["umount", "force", url.path]),
+        ]
+        for (bin, args) in attempts {
             let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/sbin/umount")
-            p.arguments = Array(args.dropFirst())
+            p.executableURL = URL(fileURLWithPath: bin)
+            p.arguments = args
+            p.standardOutput = FileHandle.nullDevice
+            p.standardError = FileHandle.nullDevice
             try? p.run()
             p.waitUntilExit()
             if !isMounted(url) { return }
@@ -141,10 +163,11 @@ final class Store: ObservableObject {
 
     /// OAuth providers: rclone opens the browser, the user signs in, the token lands in Yon's own rclone.conf.
     func add(type: String) async {
-        let base = Drive(name: "", type: type).label.replacingOccurrences(of: " ", with: "")
+        // The remote name is what Finder shows as the volume, so use the real product name.
+        let base = Drive(name: "", type: type).label
         var name = base
         var n = 2
-        while drives.contains(where: { $0.name == name }) { name = "\(base)\(n)"; n += 1 }
+        while drives.contains(where: { $0.name == name }) { name = "\(base) \(n)"; n += 1 }
         busy.insert(name)
         defer { busy.remove(name) }
         do {

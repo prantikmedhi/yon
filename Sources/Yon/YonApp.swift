@@ -49,8 +49,12 @@ struct MenuView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        if store.drives.isEmpty {
-            Text("No drives yet")
+        if store.drives.isEmpty && store.busy.isEmpty {
+            Text("Add a drive to begin")
+        }
+        // A drive being signed in is not in `drives` yet; show where it will appear.
+        ForEach(store.busy.subtracting(store.drives.map(\.name)).sorted(), id: \.self) { name in
+            Label("Signing in to \(name)…", systemImage: "circle.dotted")
         }
         ForEach(store.drives) { d in
             let on = store.mounted.contains(d.name)
@@ -80,7 +84,7 @@ struct MenuView: View {
         }
         if let e = store.error {
             Divider()
-            Text(e).foregroundStyle(.secondary)
+            Label(e, systemImage: "exclamationmark.triangle")
             Button("Dismiss") { store.error = nil }
         }
         Divider()
@@ -117,17 +121,36 @@ struct S3Form: View {
     @StateObject private var f = S3Fields()
 
     private let providers = ["Cloudflare", "AWS", "Backblaze", "Wasabi", "DigitalOcean", "Minio", "Other"]
-    private var valid: Bool { !f.name.isEmpty && !f.key.isEmpty && !f.secret.isEmpty && !store.drives.contains { $0.name == f.name } }
+    private var taken: Bool { store.drives.contains { $0.name == f.name } }
+    private var valid: Bool { !f.name.isEmpty && !f.key.isEmpty && !f.secret.isEmpty && !taken }
+
+    private var endpointHint: String {
+        switch f.provider {
+        case "Cloudflare": return "https://<account id>.r2.cloudflarestorage.com"
+        case "Backblaze": return "https://s3.<region>.backblazeb2.com"
+        case "Wasabi": return "https://s3.<region>.wasabisys.com"
+        case "DigitalOcean": return "https://<region>.digitaloceanspaces.com"
+        case "AWS": return "Leave empty for AWS"
+        default: return "https://…"
+        }
+    }
 
     var body: some View {
         Form {
-            TextField("Name", text: $f.name, prompt: Text("R2"))
-            Picker("Provider", selection: $f.provider) {
-                ForEach(providers, id: \.self) { Text($0) }
+            Section {
+                TextField("Name", text: $f.name, prompt: Text("Shown in Finder"))
+                if taken { Text("A drive named \(f.name) already exists.").font(.callout).foregroundStyle(.secondary) }
+                Picker("Provider", selection: $f.provider) {
+                    ForEach(providers, id: \.self) { Text($0) }
+                }
+                TextField("Endpoint", text: $f.endpoint, prompt: Text(endpointHint))
             }
-            TextField("Endpoint", text: $f.endpoint, prompt: Text("https://<account>.r2.cloudflarestorage.com"))
-            TextField("Access key", text: $f.key)
-            SecureField("Secret key", text: $f.secret)
+            Section {
+                TextField("Access key", text: $f.key)
+                SecureField("Secret key", text: $f.secret)
+            } footer: {
+                Text("Keys are stored in Yon's rclone config on this Mac and sent only to the endpoint above.")
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
@@ -162,12 +185,29 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Toggle("Open Yon at login", isOn: loginItem)
-            LabeledContent("Drives mount at", value: Store.mountRoot.path)
-            LabeledContent("rclone", value: Rclone.binary?.path ?? "Not installed")
-            LabeledContent("Logs", value: Rclone.logDir.path)
+            Section {
+                Toggle("Open Yon at login", isOn: loginItem)
+            }
+            Section {
+                row("Drives", Store.mountRoot)
+                row("Logs", Rclone.logDir)
+                row("Config", Rclone.configFile.deletingLastPathComponent())
+                LabeledContent("rclone", value: Rclone.binary?.path ?? "Not installed. Run: brew install rclone")
+            }
         }
         .formStyle(.grouped)
         .frame(width: 440)
+    }
+
+    private func row(_ title: String, _ url: URL) -> some View {
+        LabeledContent(title) {
+            HStack {
+                Text(url.path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
+                    .foregroundStyle(.secondary)
+                    .truncationMode(.middle)
+                Button("Show") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    .controlSize(.small)
+            }
+        }
     }
 }

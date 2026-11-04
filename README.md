@@ -15,14 +15,18 @@ macOS 14 or newer. Apple silicon and Intel. No kernel extension, no Apple develo
 ## Use
 
 1. Menu bar arrow, Add Drive, pick a provider. Your browser opens, you sign in with the provider. The token stays on your Mac.
-2. The drive appears in Finder's sidebar and at `~/Yon/<name>`.
+2. The drive appears in Finder under a location called `yon.local`, and at `~/Yon/<name>`. To have Finder call it plain `yon`, add this line to `/etc/hosts` once (needs your password) and Yon picks it up on the next mount:
+
+   ```
+   127.0.0.1 yon
+   ```
 3. Drag files in. Open them in any app. `cat`, `grep`, Final Cut, Claude Code, all see normal files.
 
 Eject from the menu or Finder. Remove a drive from the menu when you no longer want it signed in on this Mac.
 
 ## How it works
 
-Yon is a thin Swift menu-bar app around [rclone](https://rclone.org). Each drive is an rclone remote mounted with `rclone nfsmount`: a loopback NFS server that macOS mounts natively, so nothing extra is installed. Reads are chunked and streamed. Writes are staged in `~/Library/Caches/rclone` and uploaded in the background.
+Yon is a thin Swift menu-bar app around [rclone](https://rclone.org). Each drive is an rclone remote served with `rclone serve nfs` on a loopback port and mounted with the system `mount_nfs`, so nothing extra is installed. The hostname `yon.local` is published over Bonjour by Yon itself, pointing at 127.0.0.1, which is what Finder shows as the location. Reads are chunked and streamed. Writes are staged in `~/Library/Caches/rclone` and uploaded in the background.
 
 Config lives in `~/Library/Application Support/Yon/rclone.conf`. Logs in `~/Library/Logs/Yon`.
 
