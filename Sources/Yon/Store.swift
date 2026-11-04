@@ -19,6 +19,24 @@ struct Drive: Identifiable, Equatable {
     }
 }
 
+/// One file rclone is uploading right now, as `core/stats` reports it.
+struct Upload: Decodable, Equatable, Identifiable {
+    let name: String       // path inside the drive
+    let size: Int64?
+    let bytes: Int64?
+    let eta: Int?          // seconds, null until rclone has a speed for it
+    var id: String { name }
+    var percent: Int { size.map { $0 > 0 ? Int((bytes ?? 0) * 100 / $0) : 0 } ?? 0 }
+}
+
+struct UploadStatus: Equatable {
+    var files: [Upload] = []
+    var queued = 0         // written to the cache, waiting for its turn
+    var eta: Int?          // seconds, nil when rclone cannot tell yet
+    var active: Bool { !files.isEmpty || queued > 0 }
+    var count: Int { files.count + queued }
+}
+
 @MainActor
 final class Store: ObservableObject {
     nonisolated static let mountRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Yon")
@@ -27,8 +45,13 @@ final class Store: ObservableObject {
     @Published var mounted: Set<String> = []
     @Published var busy: Set<String> = []
     @Published var error: String?
+    @Published var uploads: [String: UploadStatus] = [:]   // mounted drives only
+    @Published var menuOpen = false
+
+    var uploading: Bool { uploads.values.contains { $0.active } }
 
     private var processes: [String: Process] = [:]
+    private var pollers: [String: Task<Void, Never>] = [:]
     private let defaults = UserDefaults.standard
 
     /// Drives the user wants mounted whenever Yon runs.
@@ -70,30 +93,39 @@ final class Store: ObservableObject {
             // One loopback NFS server per drive, mounted by hostname so Finder shows "yon" as the location
             // instead of "localhost". Volume name in Finder is the mount folder's name.
             // Port 0: rclone picks a free port and reports it in its log, so there is no bind race.
+            // The rc API (upload stats) gets the same treatment; its password is random per launch.
+            let pass = UUID().uuidString
             let p = try Rclone.spawn([
                 "serve", "nfs", "\(d.name):",
                 "--addr", "127.0.0.1:0",
+                "--rc", "--rc-addr", "127.0.0.1:0", "--rc-user", Rclone.RC.user,
                 "--vfs-cache-mode", "writes",          // reads stream, writes stage locally then upload
                 "--vfs-read-chunk-size", "16M",
                 "--vfs-read-chunk-streams", "4",
                 "--dir-cache-time", "30s",
                 "--poll-interval", "30s",
-            ], logName: d.name)
+            ], environment: ["RCLONE_RC_PASS": pass], logName: d.name)
             processes[d.name] = p
             p.terminationHandler = { [weak self] _ in
                 Task { @MainActor in
                     self?.processes[d.name] = nil
                     self?.mounted.remove(d.name)
+                    self?.stopPolling(d.name)
                 }
             }
-            // Ask the kernel which loopback port this exact PID is listening on. Nothing else can answer for it.
-            var port: Int?
-            for _ in 0..<40 where port == nil {
+            // Ask the kernel which loopback ports this exact PID is listening on: one NFS, one rc.
+            // Nothing else can answer for it. Only the rc one answers HTTP, which tells them apart.
+            // Up to 60 s: rclone restores pending uploads from its cache before the NFS server starts.
+            var ports: [Int] = []
+            for _ in 0..<240 where ports.count < 2 {
                 try await Task.sleep(for: .milliseconds(250))
                 if !p.isRunning { throw Rclone.Failure(message: "Could not start \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
-                port = Self.listeningPort(pid: p.processIdentifier)
+                ports = Self.listeningPorts(pid: p.processIdentifier)
             }
-            guard let port else { throw Rclone.Failure(message: "\(d.name) did not start in time.") }
+            guard ports.count == 2, let rc = await Rclone.RC.find(among: ports, pass: pass),
+                  let port = ports.first(where: { $0 != rc.port }) else {
+                throw Rclone.Failure(message: "\(d.name) did not start in time.")
+            }
 
             let m = Process()
             m.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
@@ -116,8 +148,10 @@ final class Store: ObservableObject {
             }
             mounted.insert(d.name)
             autoMount.insert(d.name)
+            poll(d.name, rc: rc)
         } catch {
             self.error = error.localizedDescription
+            processes[d.name]?.terminate()   // no mount, no reason to keep the server
         }
     }
 
@@ -128,7 +162,32 @@ final class Store: ObservableObject {
         processes[d.name]?.terminate()
         processes[d.name] = nil
         mounted.remove(d.name)
+        stopPolling(d.name)
         if forget { autoMount.remove(d.name) }
+    }
+
+    // MARK: Upload stats
+
+    /// Every 2 s while the menu is open, every 10 s otherwise. Nothing here blocks the main actor:
+    /// the rc calls are awaited and the result is only assigned when it changed.
+    private func poll(_ name: String, rc: Rclone.RC) {
+        pollers[name]?.cancel()
+        pollers[name] = Task { [weak self] in
+            var tick = 0
+            while !Task.isCancelled {
+                if tick % 5 == 0 || self?.menuOpen == true, let s = try? await rc.uploads(), s != self?.uploads[name] {
+                    self?.uploads[name] = s
+                }
+                tick += 1
+                try? await Task.sleep(for: .seconds(2))
+            }
+        }
+    }
+
+    private func stopPolling(_ name: String) {
+        pollers[name]?.cancel()
+        pollers[name] = nil
+        uploads[name] = nil
     }
 
     func unmountAll() async {
@@ -161,20 +220,19 @@ final class Store: ObservableObject {
     }
 
     /// `lsof -F n` prints one `n127.0.0.1:PORT` line per listening socket of the process.
-    private static func listeningPort(pid: Int32) -> Int? {
+    private static func listeningPorts(pid: Int32) -> [Int] {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
         p.arguments = ["-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-P", "-n", "-F", "n"]
         let out = Pipe()
         p.standardOutput = out
         p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return nil }
+        guard (try? p.run()) != nil else { return [] }
         let text = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         p.waitUntilExit()
-        return text.split(separator: "\n").lazy
+        return text.split(separator: "\n")
             .filter { $0.hasPrefix("n127.0.0.1:") }
             .compactMap { Int($0.split(separator: ":").last ?? "") }
-            .first
     }
 
     /// `nfsstat -m` prints the address the mount is currently using, e.g. "/ @ yon.local (127.0.0.1)".

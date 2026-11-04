@@ -11,11 +11,17 @@ struct YonApp: App {
         MenuBarExtra {
             MenuView()
                 .environmentObject(store)
-                .onAppear { delegate.store = store }
+                .onAppear { delegate.store = store; store.menuOpen = true }
+                .onDisappear { store.menuOpen = false }
         } label: {
-            Image(systemName: store.mounted.isEmpty ? "arrow.right" : "arrow.right.circle.fill")
-                .accessibilityLabel("Yon")
+            Image(systemName: store.uploading ? "arrow.up.circle" : store.mounted.isEmpty ? "arrow.right" : "arrow.right.circle.fill")
+                .accessibilityLabel(store.uploading ? "Yon, uploading" : "Yon")
         }
+
+        Window("Uploads", id: "uploads") {
+            UploadsView().environmentObject(store)
+        }
+        .defaultSize(width: 460, height: 240)
 
         Window("Add S3 drive", id: "s3") {
             S3Form().environmentObject(store)
@@ -72,6 +78,13 @@ struct MenuView: View {
                     Image(systemName: store.busy.contains(d.name) ? "circle.dotted" : (on ? "circle.fill" : "circle"))
                 }
             }
+            // A submenu row cannot carry a subtitle, so the status is its own disabled line underneath.
+            if on, let u = store.uploads[d.name] {
+                Label(subtitle(u), systemImage: u.active ? "arrow.up" : "checkmark")
+            }
+        }
+        if store.uploading {
+            Button("Show Uploads…") { openWindow(id: "uploads"); NSApp.activate() }
         }
         Divider()
         Menu("Add Drive") {
@@ -94,6 +107,16 @@ struct MenuView: View {
             .keyboardShortcut("q")
     }
 
+    /// "Uploading 3 files, 4 min left" or "Up to date". Words only; no bar, no colour.
+    private func subtitle(_ u: UploadStatus) -> String {
+        guard u.active else { return "Up to date" }
+        var s = "Uploading " + (u.count == 1 ? "1 file" : "\(u.count) files")
+        if let eta = u.eta {
+            s += eta < 60 ? ", under a minute left" : ", \(Duration.seconds(eta).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))) left"
+        }
+        return s
+    }
+
     private func confirmRemove(_ d: Drive) {
         let a = NSAlert()
         a.messageText = "Remove \(d.name) from Yon?"
@@ -103,6 +126,36 @@ struct MenuView: View {
         a.buttons.first?.hasDestructiveAction = true
         NSApp.activate()
         if a.runModal() == .alertFirstButtonReturn { Task { await store.remove(d) } }
+    }
+}
+
+/// Per-file upload progress for every drive, opened from the menu while something uploads.
+struct UploadsView: View {
+    @EnvironmentObject private var store: Store
+
+    var body: some View {
+        List {
+            ForEach(store.drives) { d in
+                if let u = store.uploads[d.name], u.active {
+                    Section(d.name) {
+                        ForEach(u.files) { f in
+                            HStack {
+                                Text(f.name).lineLimit(1).truncationMode(.middle)
+                                Spacer()
+                                Text("\(f.percent)% of \((f.size ?? 0).formatted(.byteCount(style: .file)))")
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                        }
+                        if u.queued > 0 {
+                            Text(u.queued == 1 ? "1 file waiting" : "\(u.queued) files waiting").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        }
+        .overlay { if !store.uploading { Text("Up to date").foregroundStyle(.secondary) } }
+        .frame(minWidth: 400, minHeight: 160)
     }
 }
 

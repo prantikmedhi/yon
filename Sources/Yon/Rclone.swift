@@ -45,7 +45,7 @@ enum Rclone {
     }
 
     /// Start a long-lived rclone process (nfsmount). Caller owns it.
-    static func spawn(_ args: [String], logName: String) throws -> Process {
+    static func spawn(_ args: [String], environment: [String: String] = [:], logName: String) throws -> Process {
         guard let binary else { throw Failure(message: "rclone is not installed. Run: brew install rclone") }
         try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
         let log = logDir.appendingPathComponent("\(logName).log")
@@ -55,9 +55,53 @@ enum Rclone {
         let p = Process()
         p.executableURL = binary
         p.arguments = ["--config", configFile.path] + args
+        p.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
         p.standardOutput = handle
         p.standardError = handle
         try p.run()
         return p
+    }
+
+    /// rclone's remote-control API of one serve process. The password exists only here and in that
+    /// process's environment (RCLONE_RC_PASS), never on its command line where `ps` would show it.
+    struct RC {
+        static let user = "yon"
+        let port: Int
+        let pass: String
+
+        func call<T: Decodable>(_ path: String, as: T.Type = T.self) async throws -> T {
+            var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/\(path)")!)
+            req.httpMethod = "POST"
+            req.timeoutInterval = 3
+            req.setValue("Basic " + Data("\(Self.user):\(pass)".utf8).base64EncodedString(), forHTTPHeaderField: "Authorization")
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw Failure(message: "rc \(path) failed") }
+            return try JSONDecoder().decode(T.self, from: data)
+        }
+
+        /// Of a process's listening ports, the one that answers rc. The NFS port does not speak HTTP.
+        static func find(among ports: [Int], pass: String) async -> RC? {
+            await withTaskGroup(of: RC?.self) { group in
+                for port in ports {
+                    group.addTask {
+                        let rc = RC(port: port, pass: pass)
+                        return (try? await rc.call("rc/noop", as: [String: String].self)) == nil ? nil : rc
+                    }
+                }
+                for await rc in group where rc != nil { group.cancelAll(); return rc }
+                return nil
+            }
+        }
+
+        func uploads() async throws -> UploadStatus {
+            struct Core: Decodable { let transferring: [Upload]? }
+            struct VFS: Decodable { struct Cache: Decodable { let uploadsQueued: Int }; let diskCache: Cache }
+            let core: Core = try await call("core/stats")
+            let vfs: VFS = try await call("vfs/stats")
+            // Finder's AppleDouble sidecars (._name) ride along with every drop; the user did not add them.
+            let files = (core.transferring ?? []).filter { !$0.name.split(separator: "/").last!.hasPrefix("._") }
+            // Per-file ETAs only. The overall one is nonsense in the first seconds of a transfer.
+            return UploadStatus(files: files, queued: vfs.diskCache.uploadsQueued, eta: files.compactMap(\.eta).max())
+        }
     }
 }
