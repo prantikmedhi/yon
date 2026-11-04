@@ -49,6 +49,7 @@ final class Store: ObservableObject {
         LoopbackHost.publish()
         await unmountStale()
         await refresh()
+        Onboarding.showIfNeeded(store: self)
         for d in drives where autoMount.contains(d.name) { await mount(d) }
     }
 
@@ -75,6 +76,7 @@ final class Store: ObservableObject {
     // MARK: Mount
 
     func mount(_ d: Drive) async {
+        error = nil
         guard !mounted.contains(d.name), !busy.contains(d.name) else { return }
         busy.insert(d.name)
         defer { busy.remove(d.name) }
@@ -101,12 +103,13 @@ final class Store: ObservableObject {
             }
             // Ask the kernel which loopback port this exact PID is listening on. Nothing else can answer for it.
             var port: Int?
-            for _ in 0..<40 where port == nil {
+            // Google Drive can take 30 s+ to refresh its token on a slow link before rclone binds, so wait up to 90 s.
+            for _ in 0..<360 where port == nil {
                 try await Task.sleep(for: .milliseconds(250))
                 if !p.isRunning { throw Rclone.Failure(message: "Could not start \(d.name). See ~/Library/Logs/Yon/\(d.name).log") }
                 port = Self.listeningPort(pid: p.processIdentifier)
             }
-            guard let port else { throw Rclone.Failure(message: "\(d.name) did not start in time.") }
+            guard let port else { throw Rclone.Failure(message: "\(d.name) did not start in time. Check your internet connection and try Mount again.") }
 
             let m = Process()
             m.executableURL = URL(fileURLWithPath: "/sbin/mount_nfs")
@@ -130,6 +133,11 @@ final class Store: ObservableObject {
             mounted.insert(d.name)
             autoMount.insert(d.name)
         } catch {
+            // A failed attempt must not leave an rclone server running with nothing mounted on it.
+            if !mounted.contains(d.name) {
+                processes[d.name]?.terminate()
+                processes[d.name] = nil
+            }
             self.error = error.localizedDescription
         }
     }
@@ -229,6 +237,7 @@ final class Store: ObservableObject {
     /// With a password, the provider remote is created under a hidden name and a crypt remote with the
     /// drive's name wraps it; that is the one that gets mounted.
     func add(type: String, password: String? = nil) async {
+        error = nil
         // The remote name is what Finder shows as the volume, so use the real product name.
         let base = Drive(name: "", type: type, raw: nil).label
         var name = base
@@ -245,6 +254,7 @@ final class Store: ObservableObject {
     }
 
     func addS3(name: String, provider: String, endpoint: String, key: String, secret: String, password: String? = nil) async {
+        error = nil
         var params = ["provider=\(provider)", "access_key_id=\(key)", "secret_access_key=\(secret)"]
         if !endpoint.isEmpty { params.append("endpoint=\(endpoint)") }
         await create(name: name, type: "s3", params: params, password: password)
@@ -272,6 +282,7 @@ final class Store: ObservableObject {
 
     /// Removes the remote, and for an encrypted drive the hidden provider remote behind it too.
     func remove(_ d: Drive) async {
+        error = nil
         await unmount(d)
         do {
             try await Rclone.run(["config", "delete", d.name])

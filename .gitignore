@@ -4,3 +4,4 @@
 dist/
 .DS_Store
 rclone.conf
+helumi-teardown.md

@@ -92,6 +92,7 @@ struct MenuView: View {
             Button("Dismiss") { store.error = nil }
         }
         Divider()
+        Button("About Yon") { NSApp.activate(); NSApp.orderFrontStandardAboutPanel(nil) }
         Button("Settings…") { openSettings(); NSApp.activate() }
             .keyboardShortcut(",")
         Button("Quit Yon") { NSApp.terminate(nil) }
