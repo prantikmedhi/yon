@@ -40,6 +40,10 @@ An encrypted drive is two remotes: the provider remote under a hidden name (`<na
 
 The NFS server listens on 127.0.0.1 only, with no authentication beyond that, the same model FUSE-T uses. On a Mac shared by several user accounts, another signed-in user could reach a mounted drive. Yon assumes a single-user Mac.
 
+## Updates
+
+Yon checks `https://prantikmedhi.github.io/yon/appcast.xml` through Sparkle and asks before installing. Every release is signed with an EdDSA key whose public half is in the app; the private half exists only as the `SPARKLE_PRIVATE_KEY` repository secret. Check for Updates… is in the menu.
+
 ## OAuth client IDs
 
 Without configuration, sign-in uses rclone's shared Google and Microsoft client IDs. Google is retiring its shared one during 2026, so release builds should ship their own. Create a Google Cloud OAuth client (Desktop app) and an Azure app registration, then build with:
@@ -62,6 +66,6 @@ Needs Command Line Tools and nothing else. `scripts/bundle.sh --dev` does a fast
 
 ## Not yet
 
-Share links, per-folder "keep on this Mac", upload progress in the menu, encrypting a drive that already exists. See issues.
+Share links, per-folder "keep on this Mac", encrypting a drive that already exists. See issues.
 
 MIT.
