@@ -170,13 +170,24 @@ final class Store: ObservableObject {
 
     /// Every 2 s while the menu is open, every 10 s otherwise. Nothing here blocks the main actor:
     /// the rc calls are awaited and the result is only assigned when it changed.
+    /// Each tick also notices when the mount went away under us (Finder eject, "Disconnect All" on the
+    /// server-interrupted dialog): the server is stopped and the drive shows as ejected. autoMount is
+    /// left alone, so the drive comes back on the next launch.
     private func poll(_ name: String, rc: Rclone.RC) {
         pollers[name]?.cancel()
         pollers[name] = Task { [weak self] in
             var tick = 0
             while !Task.isCancelled {
-                if tick % 5 == 0 || self?.menuOpen == true, let s = try? await rc.uploads(), s != self?.uploads[name] {
-                    self?.uploads[name] = s
+                guard let self else { return }
+                if !isMounted(Self.mountRoot.appendingPathComponent(name)) {
+                    processes[name]?.terminate()
+                    processes[name] = nil
+                    mounted.remove(name)
+                    stopPolling(name)
+                    return
+                }
+                if tick % 5 == 0 || menuOpen, let s = try? await rc.uploads(), s != uploads[name] {
+                    uploads[name] = s
                 }
                 tick += 1
                 try? await Task.sleep(for: .seconds(2))
@@ -202,9 +213,12 @@ final class Store: ObservableObject {
     }
 
     private func unmountPath(_ url: URL) async {
+        // diskutil first: it goes through DiskArbitration, which closes Finder windows cleanly and
+        // avoids the "Server connections interrupted" dialog that a bare umount can leave behind.
         let attempts: [(String, [String])] = [
+            ("/usr/sbin/diskutil", ["unmount", url.path]),
             ("/sbin/umount", [url.path]),
-            ("/usr/sbin/diskutil", ["umount", "force", url.path]),
+            ("/usr/sbin/diskutil", ["unmount", "force", url.path]),
         ]
         for (bin, args) in attempts {
             let p = Process()
