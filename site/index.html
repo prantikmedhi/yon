@@ -87,11 +87,9 @@
     <a class="btn primary" href="https://github.com/hackyard/yon/releases/latest/download/Yon.dmg">Download for Mac</a>
     <a class="btn quiet" href="https://github.com/hackyard/yon">View source</a>
   </div>
-  <p class="req">macOS 14 or later. Apple silicon and Intel. Free, MIT.</p>
-
   <figure>
     <!-- TODO: real screenshot, 1280x800 light + dark: Finder window with "Google Drive" under Locations in the sidebar, a 40 GB .mov selected, Get Info showing "0 bytes on disk". -->
-    <img src="finder.png" alt="A Finder window with a Google Drive volume in the sidebar and a large video file selected." width="1280" height="800">
+    <img src="finder.png" alt="A Finder window with a Google Drive volume in the sidebar and a large video file selected." width="1280" height="800" onerror="this.parentElement.remove()">
     <figcaption>A Yon drive next to Macintosh HD. Files open in any app.</figcaption>
   </figure>
 
@@ -99,24 +97,20 @@
     <h2>How it works</h2>
     <p><strong>Sign in with your provider.</strong> Your browser opens, you approve, the token stays on your Mac. Yon has no server and never sees your password.</p>
     <p><strong>Files stream in pieces.</strong> Open a 40 GB video and it plays in about a second, because only the part being watched is fetched.</p>
-    <p><strong>Nothing else to install.</strong> No kernel extension, no driver. Yon mounts the drive the way macOS already mounts network volumes.</p>
+    <p><strong>Nothing else to install.</strong> No kernel extension, no driver. Yon mounts the drive the way macOS already mounts network volumes. Needs macOS 14 or later, Apple silicon or Intel.</p>
   </section>
 
   <section>
     <h2>Your storage, not ours</h2>
     <p>Yon is free. Space comes from the plan you already pay for: Google gives 15 GB free and 2 TB for about $10 a month. Yon adds no bill and holds no copy of your files.</p>
     <p>Works with anything rclone speaks: Google Drive, OneDrive, Dropbox, Box, Cloudflare R2, Backblaze B2, Amazon S3, and dozens more.</p>
-  </section>
-
-  <section>
-    <h2>Made for agents too</h2>
     <p>A Yon drive is a normal folder at <code>~/Yon</code>. Claude Code, Cursor, <code>grep</code> and Final Cut read and write it like any other path, without downloading whole files first.</p>
   </section>
 </main>
 
 <footer>
   <span class="mark">yon.</span>
-  <span><a href="https://github.com/hackyard/yon">Source</a> · MIT · Built on <a href="https://rclone.org">rclone</a></span>
+  <span>MIT. Built on <a href="https://rclone.org">rclone</a>.</span>
 </footer>
 
 </body>
