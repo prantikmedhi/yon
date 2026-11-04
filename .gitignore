@@ -1,0 +1,6 @@
+.build/
+*.dmg
+*.app/
+dist/
+.DS_Store
+rclone.conf
